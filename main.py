@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 
 class TextRequest(BaseModel):
-    text: str = ""
+    text: str
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -62,6 +62,20 @@ def request_groq(messages, append_history=False):
         conversation_history.append(response.get("choices", [{}])[0].get('message', {}))
     explanation = response.get("choices", [{}])[0].get("message", {}).get("content", "Can't process request.")
     return explanation
+
+@app.post("/clarify")
+async def clarify(text: TextRequest):
+    global conversation_history
+
+    conversation_history.append({"role": "user", "content": text.text})
+    clarification = request_groq(conversation_history, True)
+
+    prompts_message = [{"role": "user", "content": "Suggest three clarifying prompts a user might ask in plaint text, "
+                                                   "separated only by a semicolon. Do not include any extra "
+                                                   "information"}]
+    clarifying_prompts = request_groq(conversation_history + prompts_message).split("; ")
+
+    return {"clarification": clarification, "clarifying_prompts": clarifying_prompts}
 
 
 # OCR Endpoint - Extract text from image
