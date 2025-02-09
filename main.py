@@ -1,14 +1,13 @@
 import base64
 import os
-import re
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
 from google.cloud import vision
 
-#class TextRequest(BaseModel):
-    #text: str = ""
+# class TextRequest(BaseModel):
+#   text: str = ""
 
 
 # Initialize FastAPI app
@@ -22,17 +21,28 @@ MATHPIX_API_APP_ID = os.getenv("MATHPIX_API_APP_ID")
 # Initialize the Google Cloud Vision client
 client = vision.ImageAnnotatorClient()
 
+conversation_history = []
+
+
 # Explain Text Using LLM
 @app.post("/explain")
 async def explain_text(file: UploadFile = File(...)):
     text = await process_image(file)
+    global conversation_history
 
-    explanation = request_groq(text, "Explain this")
+    conversation_history = [{"role": "user", "content": f"Explain this: {text}"}]
 
-    return {"explanation": explanation}  # OCR Endpoint - Extract text from image
+    explanation = request_groq(text, "Explain this", True)
+
+    clarifying_prompts = request_groq("", "Suggest three clarifying prompts a user might ask in plaint text, "
+                                          "separated only by a semicolon. Do not include any extra "
+                                          "information").split("; ")
+
+    return {"explanation": explanation, "clarifying_prompts": clarifying_prompts}
 
 
-def request_groq(text, prompt):
+def request_groq(text, prompt, append_history=False):
+    global conversation_history
     response = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
@@ -41,9 +51,15 @@ def request_groq(text, prompt):
             "messages": [{"role": "user", "content": f"{prompt}: {text}"}]
         }
     )
-    explanation = response.json().get("choices", [{}])[0].get("message", {}).get("content", "Can't process request.")
-    return explanation  # OCR Endpoint - Extract text from image
+    response = response.json()
+    if append_history:
+        print(response.get("choices", [{}])[0])
+        conversation_history.append(response.get("choices", [{}])[0])
+    explanation = response.get("choices", [{}])[0].get("message", {}).get("content", "Can't process request.")
+    return explanation
 
+
+# OCR Endpoint - Extract text from image
 @app.post("/ocr")
 async def extract_text(file: UploadFile = File(...)):
     text = await process_image(file)
@@ -67,6 +83,7 @@ async def process_image(file):
 
 # Mathpix API URL for v3/text endpoint
 MATHPIX_API_URL = "https://api.mathpix.com/v3/text"
+
 
 @app.post("/mathocr")
 async def recognize_math(file: UploadFile = File(...)):
@@ -102,6 +119,7 @@ async def recognize_math(file: UploadFile = File(...)):
     # Return the extracted LaTeX and plain text formulas
     return JSONResponse(content=result)
 
+
 # Endpoint to process image containing both plain text and math
 @app.post("/process-page/")
 async def process_page(file: UploadFile = File(...)):
@@ -134,7 +152,7 @@ async def process_page(file: UploadFile = File(...)):
     # Parse the response from Mathpix
     result = response.json()
 
-    #print(result)
+    # print(result)
 
     # Extract the plain text and LaTeX (if available)
     plain_text = result.get("text", "")
@@ -155,9 +173,13 @@ def convert_to_markdown(markdown: str) -> str:
     Returns a Markdown string.
     """
 
-    markdown = request_groq(markdown, "Convert MathPix markdown into a regular markdown and fix spelling mistakes. Do not include any additional notes or other information apart from the markdown itself.")
+    markdown = request_groq(markdown,
+                            "Convert MathPix markdown into a regular markdown, fix spelling mistakes, and replace "
+                            "arrays with inline equations. Do not include any additional notes or other information "
+                            "apart from the markdown itself.")
 
     return markdown
+
 
 # Run locally (if not using a cloud service)
 if __name__ == "__main__":
