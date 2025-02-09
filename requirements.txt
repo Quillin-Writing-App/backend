@@ -1,0 +1,7 @@
+fastapi==0.115.8
+Pillow==11.1.0
+pix2tex==0.1.4
+protobuf==5.29.3
+python-dotenv==1.0.1
+Requests==2.32.3
+uvicorn==0.34.0
