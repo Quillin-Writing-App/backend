@@ -27,21 +27,21 @@ client = vision.ImageAnnotatorClient()
 async def explain_text(file: UploadFile = File(...)):
     text = await process_image(file)
 
-    explanation = request_explanation(text)
+    explanation = request_groq(text, "Explain this")
 
     return {"explanation": explanation}  # OCR Endpoint - Extract text from image
 
 
-def request_explanation(text):
+def request_groq(text, prompt):
     response = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
         json={
             "model": "llama3-70b-8192",
-            "messages": [{"role": "user", "content": f"Explain this: {text}"}]
+            "messages": [{"role": "user", "content": f"{prompt}: {text}"}]
         }
     )
-    explanation = response.json().get("choices", [{}])[0].get("message", {}).get("content", "No explanation found.")
+    explanation = response.json().get("choices", [{}])[0].get("message", {}).get("content", "Can't process request.")
     return explanation  # OCR Endpoint - Extract text from image
 
 @app.post("/ocr")
@@ -154,11 +154,8 @@ def convert_to_markdown(markdown: str) -> str:
     - latex: The extracted LaTeX formulas.
     Returns a Markdown string.
     """
-    # Convert block math from Mathpix \[ ... \] to $$ ... $$ for GitHub
-    markdown = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', markdown, flags=re.DOTALL)
 
-    # Optionally: Convert inline math \(...\) to \( ... \), but this should already be supported by GitHub
-    markdown = re.sub(r'\\\((.*?)\\\)', r'(\1)', markdown, flags=re.DOTALL)
+    markdown = request_groq(markdown, "Convert MathPix markdown into a regular markdown and fix spelling mistakes. Do not include any additional notes or other information apart from the markdown itself.")
 
     return markdown
 
