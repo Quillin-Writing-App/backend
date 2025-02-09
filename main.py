@@ -7,12 +7,11 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
 from google.cloud import vision
+from pydantic import BaseModel
 
-# class TextRequest(BaseModel):
-#   text: str = ""
-# class TextRequest(BaseModel):
-#   text: str = ""
 
+class TextRequest(BaseModel):
+    text: str = ""
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -40,29 +39,27 @@ async def explain_text(file: UploadFile = File(...)):
 
     conversation_history = [{"role": "user", "content": f"Explain this: {text}"}]
 
-    explanation = request_groq(text, "Explain this", True)
-
-    clarifying_prompts = request_groq("", "Suggest three clarifying prompts a user might ask in plaint text, "
+    explanation = request_groq(conversation_history, True)
+    prompts_message = [{"role": "user", "content": "Suggest three clarifying prompts a user might ask in plaint text, "
                                           "separated only by a semicolon. Do not include any extra "
-                                          "information").split("; ")
+                                          "information"}]
+    clarifying_prompts = request_groq(conversation_history+prompts_message).split("; ")
 
     return {"explanation": explanation, "clarifying_prompts": clarifying_prompts}
 
-def request_groq(text, prompt, append_history=False):
+def request_groq(messages, append_history=False):
     global conversation_history
     response = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
         json={
             "model": "llama3-70b-8192",
-            "messages": [{"role": "user", "content": f"{prompt}: {text}"}]
+            "messages": messages
         }
     )
     response = response.json()
     if append_history:
-        print(response.get("choices", [{}])[0])
-        conversation_history.append(response.get("choices", [{}])[0])
-        print(conversation_history)
+        conversation_history.append(response.get("choices", [{}])[0].get('message', {}))
     explanation = response.get("choices", [{}])[0].get("message", {}).get("content", "Can't process request.")
     return explanation
 
@@ -162,9 +159,6 @@ async def process_page(file: UploadFile = File(...)):
     # Parse the response from Mathpix
     result = response.json()
 
-    # print(result)
-    # print(result)
-
     # Extract the plain text and LaTeX (if available)
     plain_text = result.get("text", "")
     latex = result.get("latex_styled", "")
@@ -184,10 +178,12 @@ def convert_to_markdown(markdown: str) -> str:
     Returns a Markdown string.
     """
 
-    markdown = request_groq(markdown,
-                            "Convert MathPix markdown into a regular markdown, fix spelling mistakes, and replace "
-                            "arrays with inline equations. Do not include any additional notes or other information "
-                            "apart from the markdown itself.")
+    conversation_history = [{"role": "user", "content": f"Convert MathPix markdown into a regular markdown, "
+                                                        f"fix spelling mistakes, and replace arrays with inline "
+                                                        f"equations. Do not include any additional notes or other "
+                                                        f"information apart from the markdown itself: {markdown}"}]
+
+    markdown = request_groq(conversation_history)
 
     return markdown
 
@@ -202,7 +198,6 @@ async def send_to_memenome(file: UploadFile = File(...)):
     """
     # Step 1: Extract text from the image using Google Vision API
     extracted_text = await process_image(file)
-    print(extracted_text)
     #extracted_text = "Lebron James is the greatest of all time"
 
     # Step 2: Create the request payload with the extracted text
