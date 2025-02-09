@@ -1,5 +1,6 @@
 import base64
 import json
+import json
 import os
 import requests
 from dotenv import load_dotenv
@@ -7,6 +8,8 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
 from google.cloud import vision
 
+# class TextRequest(BaseModel):
+#   text: str = ""
 # class TextRequest(BaseModel):
 #   text: str = ""
 
@@ -19,8 +22,15 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MATHPIX_API_KEY = os.getenv("MATHPIX_API_KEY")
 MATHPIX_API_APP_ID = os.getenv("MATHPIX_API_APP_ID")
 encoded_credentials = os.getenv("GOOGLE_CREDENTIALS")
+encoded_credentials = os.getenv("GOOGLE_CREDENTIALS")
 
 # Initialize the Google Cloud Vision client
+credentials_json = base64.b64decode(encoded_credentials).decode("utf-8")
+credentials_dict = json.loads(credentials_json)
+client = vision.ImageAnnotatorClient.from_service_account_info(credentials_dict)
+
+conversation_history = []
+
 credentials_json = base64.b64decode(encoded_credentials).decode("utf-8")
 credentials_dict = json.loads(credentials_json)
 client = vision.ImageAnnotatorClient.from_service_account_info(credentials_dict)
@@ -37,14 +47,25 @@ async def explain_text(file: UploadFile = File(...)):
     conversation_history = [{"role": "user", "content": f"Explain this: {text}"}]
 
     explanation = request_groq(text, "Explain this", True)
+    global conversation_history
 
+    conversation_history = [{"role": "user", "content": f"Explain this: {text}"}]
+
+    explanation = request_groq(text, "Explain this", True)
+
+    clarifying_prompts = request_groq("", "Suggest three clarifying prompts a user might ask in plaint text, "
+                                          "separated only by a semicolon. Do not include any extra "
+                                          "information").split("; ")
     clarifying_prompts = request_groq("", "Suggest three clarifying prompts a user might ask in plaint text, "
                                           "separated only by a semicolon. Do not include any extra "
                                           "information").split("; ")
 
     return {"explanation": explanation, "clarifying_prompts": clarifying_prompts}
+    return {"explanation": explanation, "clarifying_prompts": clarifying_prompts}
 
 
+def request_groq(text, prompt, append_history=False):
+    global conversation_history
 def request_groq(text, prompt, append_history=False):
     global conversation_history
     response = requests.post(
@@ -53,8 +74,18 @@ def request_groq(text, prompt, append_history=False):
         json={
             "model": "llama3-70b-8192",
             "messages": [{"role": "user", "content": f"{prompt}: {text}"}]
+            "messages": [{"role": "user", "content": f"{prompt}: {text}"}]
         }
     )
+    response = response.json()
+    if append_history:
+        print(response.get("choices", [{}])[0])
+        conversation_history.append(response.get("choices", [{}])[0])
+    explanation = response.get("choices", [{}])[0].get("message", {}).get("content", "Can't process request.")
+    return explanation
+
+
+# OCR Endpoint - Extract text from image
     response = response.json()
     if append_history:
         print(response.get("choices", [{}])[0])
@@ -87,6 +118,7 @@ async def process_image(file):
 
 # Mathpix API URL for v3/text endpoint
 MATHPIX_API_URL = "https://api.mathpix.com/v3/text"
+
 
 
 @app.post("/mathocr")
@@ -124,6 +156,7 @@ async def recognize_math(file: UploadFile = File(...)):
     return JSONResponse(content=result)
 
 
+
 # Endpoint to process image containing both plain text and math
 @app.post("/process-page/")
 async def process_page(file: UploadFile = File(...)):
@@ -157,6 +190,7 @@ async def process_page(file: UploadFile = File(...)):
     result = response.json()
 
     # print(result)
+    # print(result)
 
     # Extract the plain text and LaTeX (if available)
     plain_text = result.get("text", "")
@@ -176,6 +210,11 @@ def convert_to_markdown(markdown: str) -> str:
     - latex: The extracted LaTeX formulas.
     Returns a Markdown string.
     """
+
+    markdown = request_groq(markdown,
+                            "Convert MathPix markdown into a regular markdown, fix spelling mistakes, and replace "
+                            "arrays with inline equations. Do not include any additional notes or other information "
+                            "apart from the markdown itself.")
 
     markdown = request_groq(markdown,
                             "Convert MathPix markdown into a regular markdown, fix spelling mistakes, and replace "
