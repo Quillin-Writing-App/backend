@@ -22,15 +22,8 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MATHPIX_API_KEY = os.getenv("MATHPIX_API_KEY")
 MATHPIX_API_APP_ID = os.getenv("MATHPIX_API_APP_ID")
 encoded_credentials = os.getenv("GOOGLE_CREDENTIALS")
-encoded_credentials = os.getenv("GOOGLE_CREDENTIALS")
 
 # Initialize the Google Cloud Vision client
-credentials_json = base64.b64decode(encoded_credentials).decode("utf-8")
-credentials_dict = json.loads(credentials_json)
-client = vision.ImageAnnotatorClient.from_service_account_info(credentials_dict)
-
-conversation_history = []
-
 credentials_json = base64.b64decode(encoded_credentials).decode("utf-8")
 credentials_dict = json.loads(credentials_json)
 client = vision.ImageAnnotatorClient.from_service_account_info(credentials_dict)
@@ -42,11 +35,7 @@ conversation_history = []
 @app.post("/explain")
 async def explain_text(file: UploadFile = File(...)):
     text = await process_image(file)
-    global conversation_history
 
-    conversation_history = [{"role": "user", "content": f"Explain this: {text}"}]
-
-    explanation = request_groq(text, "Explain this", True)
     global conversation_history
 
     conversation_history = [{"role": "user", "content": f"Explain this: {text}"}]
@@ -56,16 +45,9 @@ async def explain_text(file: UploadFile = File(...)):
     clarifying_prompts = request_groq("", "Suggest three clarifying prompts a user might ask in plaint text, "
                                           "separated only by a semicolon. Do not include any extra "
                                           "information").split("; ")
-    clarifying_prompts = request_groq("", "Suggest three clarifying prompts a user might ask in plaint text, "
-                                          "separated only by a semicolon. Do not include any extra "
-                                          "information").split("; ")
 
     return {"explanation": explanation, "clarifying_prompts": clarifying_prompts}
-    return {"explanation": explanation, "clarifying_prompts": clarifying_prompts}
 
-
-def request_groq(text, prompt, append_history=False):
-    global conversation_history
 def request_groq(text, prompt, append_history=False):
     global conversation_history
     response = requests.post(
@@ -74,22 +56,13 @@ def request_groq(text, prompt, append_history=False):
         json={
             "model": "llama3-70b-8192",
             "messages": [{"role": "user", "content": f"{prompt}: {text}"}]
-            "messages": [{"role": "user", "content": f"{prompt}: {text}"}]
         }
     )
     response = response.json()
     if append_history:
         print(response.get("choices", [{}])[0])
         conversation_history.append(response.get("choices", [{}])[0])
-    explanation = response.get("choices", [{}])[0].get("message", {}).get("content", "Can't process request.")
-    return explanation
-
-
-# OCR Endpoint - Extract text from image
-    response = response.json()
-    if append_history:
-        print(response.get("choices", [{}])[0])
-        conversation_history.append(response.get("choices", [{}])[0])
+        print(conversation_history)
     explanation = response.get("choices", [{}])[0].get("message", {}).get("content", "Can't process request.")
     return explanation
 
@@ -210,11 +183,6 @@ def convert_to_markdown(markdown: str) -> str:
     - latex: The extracted LaTeX formulas.
     Returns a Markdown string.
     """
-
-    markdown = request_groq(markdown,
-                            "Convert MathPix markdown into a regular markdown, fix spelling mistakes, and replace "
-                            "arrays with inline equations. Do not include any additional notes or other information "
-                            "apart from the markdown itself.")
 
     markdown = request_groq(markdown,
                             "Convert MathPix markdown into a regular markdown, fix spelling mistakes, and replace "
