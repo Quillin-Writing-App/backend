@@ -1,4 +1,5 @@
 import base64
+import json
 import os
 import requests
 from dotenv import load_dotenv
@@ -17,9 +18,12 @@ load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MATHPIX_API_KEY = os.getenv("MATHPIX_API_KEY")
 MATHPIX_API_APP_ID = os.getenv("MATHPIX_API_APP_ID")
+encoded_credentials = os.getenv("GOOGLE_CREDENTIALS")
 
 # Initialize the Google Cloud Vision client
-client = vision.ImageAnnotatorClient()
+credentials_json = base64.b64decode(encoded_credentials).decode("utf-8")
+credentials_dict = json.loads(credentials_json)
+client = vision.ImageAnnotatorClient.from_service_account_info(credentials_dict)
 
 conversation_history = []
 
