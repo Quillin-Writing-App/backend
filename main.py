@@ -1,6 +1,6 @@
 import base64
 import os
-
+import re
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File
@@ -86,17 +86,81 @@ async def recognize_math(file: UploadFile = File(...)):
     # Prepare the data for the Mathpix API
     data = {
         "src": f"data:image/jpeg;base64,{image_base64}",
-        "formats": ["latex", "text"]
+        "formats": ["latex_styled", "text"]
     }
 
     # Make the request to the Mathpix API
     response = requests.post(MATHPIX_API_URL, headers=headers, json=data)
+
+    # Check for errors in the response
+    if response.status_code != 200:
+        return JSONResponse(content="Error recognizing math")
 
     # Parse the response from Mathpix
     result = response.json()
 
     # Return the extracted LaTeX and plain text formulas
     return JSONResponse(content=result)
+
+# Endpoint to process image containing both plain text and math
+@app.post("/process-page/")
+async def process_page(file: UploadFile = File(...)):
+    # Read the uploaded file
+    image_content = await file.read()
+
+    # Convert the image content to base64 encoding
+    image_base64 = base64.b64encode(image_content).decode('utf-8')
+
+    # Prepare the headers for the Mathpix API request
+    headers = {
+        "app_id": MATHPIX_API_APP_ID,
+        "app_key": MATHPIX_API_KEY,
+        "Content-Type": "application/json"
+    }
+
+    # Prepare the data for the Mathpix API (we'll request both text and LaTeX)
+    data = {
+        "src": f"data:image/jpeg;base64,{image_base64}",
+        "formats": ["latex_styled", "text", "html"]
+    }
+
+    # Make the request to the Mathpix API
+    response = requests.post(MATHPIX_API_URL, headers=headers, json=data)
+
+    # Check for errors in the response
+    if response.status_code != 200:
+        return JSONResponse(content="Error recognizing math")
+
+    # Parse the response from Mathpix
+    result = response.json()
+
+    #print(result)
+
+    # Extract the plain text and LaTeX (if available)
+    plain_text = result.get("text", "")
+    latex = result.get("latex_styled", "")
+
+    # Convert plain text and LaTeX into a Markdown-compatible format
+    markdown_content = convert_to_markdown(plain_text or latex)
+
+    # Return the generated markdown
+    return JSONResponse(content={"markdown": markdown_content})
+
+
+def convert_to_markdown(markdown: str) -> str:
+    """
+    Convert the OCR results into a Markdown-formatted LaTeX page.
+    - plain_text: The extracted plain text content.
+    - latex: The extracted LaTeX formulas.
+    Returns a Markdown string.
+    """
+    # Convert block math from Mathpix \[ ... \] to $$ ... $$ for GitHub
+    markdown = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', markdown, flags=re.DOTALL)
+
+    # Optionally: Convert inline math \(...\) to \( ... \), but this should already be supported by GitHub
+    markdown = re.sub(r'\\\((.*?)\\\)', r'(\1)', markdown, flags=re.DOTALL)
+
+    return markdown
 
 # Run locally (if not using a cloud service)
 if __name__ == "__main__":
