@@ -1,14 +1,14 @@
 import base64
+import json
 import os
-import re
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File
 from fastapi.responses import JSONResponse
 from google.cloud import vision
 
-#class TextRequest(BaseModel):
-    #text: str = ""
+# class TextRequest(BaseModel):
+#   text: str = ""
 
 
 # Initialize FastAPI app
@@ -18,32 +18,52 @@ load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MATHPIX_API_KEY = os.getenv("MATHPIX_API_KEY")
 MATHPIX_API_APP_ID = os.getenv("MATHPIX_API_APP_ID")
+encoded_credentials = os.getenv("GOOGLE_CREDENTIALS")
 
 # Initialize the Google Cloud Vision client
-client = vision.ImageAnnotatorClient()
+credentials_json = base64.b64decode(encoded_credentials).decode("utf-8")
+credentials_dict = json.loads(credentials_json)
+client = vision.ImageAnnotatorClient.from_service_account_info(credentials_dict)
+
+conversation_history = []
+
 
 # Explain Text Using LLM
 @app.post("/explain")
 async def explain_text(file: UploadFile = File(...)):
     text = await process_image(file)
+    global conversation_history
 
-    explanation = request_explanation(text)
+    conversation_history = [{"role": "user", "content": f"Explain this: {text}"}]
 
-    return {"explanation": explanation}  # OCR Endpoint - Extract text from image
+    explanation = request_groq(text, "Explain this", True)
+
+    clarifying_prompts = request_groq("", "Suggest three clarifying prompts a user might ask in plaint text, "
+                                          "separated only by a semicolon. Do not include any extra "
+                                          "information").split("; ")
+
+    return {"explanation": explanation, "clarifying_prompts": clarifying_prompts}
 
 
-def request_explanation(text):
+def request_groq(text, prompt, append_history=False):
+    global conversation_history
     response = requests.post(
         "https://api.groq.com/openai/v1/chat/completions",
         headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
         json={
             "model": "llama3-70b-8192",
-            "messages": [{"role": "user", "content": f"Explain this: {text}"}]
+            "messages": [{"role": "user", "content": f"{prompt}: {text}"}]
         }
     )
-    explanation = response.json().get("choices", [{}])[0].get("message", {}).get("content", "No explanation found.")
-    return explanation  # OCR Endpoint - Extract text from image
+    response = response.json()
+    if append_history:
+        print(response.get("choices", [{}])[0])
+        conversation_history.append(response.get("choices", [{}])[0])
+    explanation = response.get("choices", [{}])[0].get("message", {}).get("content", "Can't process request.")
+    return explanation
 
+
+# OCR Endpoint - Extract text from image
 @app.post("/ocr")
 async def extract_text(file: UploadFile = File(...)):
     text = await process_image(file)
@@ -67,6 +87,7 @@ async def process_image(file):
 
 # Mathpix API URL for v3/text endpoint
 MATHPIX_API_URL = "https://api.mathpix.com/v3/text"
+
 
 @app.post("/mathocr")
 async def recognize_math(file: UploadFile = File(...)):
@@ -102,6 +123,7 @@ async def recognize_math(file: UploadFile = File(...)):
     # Return the extracted LaTeX and plain text formulas
     return JSONResponse(content=result)
 
+
 # Endpoint to process image containing both plain text and math
 @app.post("/process-page/")
 async def process_page(file: UploadFile = File(...)):
@@ -134,7 +156,7 @@ async def process_page(file: UploadFile = File(...)):
     # Parse the response from Mathpix
     result = response.json()
 
-    #print(result)
+    # print(result)
 
     # Extract the plain text and LaTeX (if available)
     plain_text = result.get("text", "")
@@ -154,16 +176,63 @@ def convert_to_markdown(markdown: str) -> str:
     - latex: The extracted LaTeX formulas.
     Returns a Markdown string.
     """
-    # Convert block math from Mathpix \[ ... \] to $$ ... $$ for GitHub
-    markdown = re.sub(r'\\\[(.*?)\\\]', r'$$\1$$', markdown, flags=re.DOTALL)
 
-    # Optionally: Convert inline math \(...\) to \( ... \), but this should already be supported by GitHub
-    markdown = re.sub(r'\\\((.*?)\\\)', r'(\1)', markdown, flags=re.DOTALL)
+    markdown = request_groq(markdown,
+                            "Convert MathPix markdown into a regular markdown, fix spelling mistakes, and replace "
+                            "arrays with inline equations. Do not include any additional notes or other information "
+                            "apart from the markdown itself.")
 
     return markdown
+
+
+# NEW CODE START: Fetty Wap API Endpoint
+# file: UploadFile = File(...)
+@app.post("/fetty_wap")
+async def send_to_memenome(file: UploadFile = File(...)):
+    """
+    Extracts text from an uploaded image, replaces the mitochondria text 
+    in the Memenome API payload, and sends the request.
+    """
+    # Step 1: Extract text from the image using Google Vision API
+    extracted_text = await process_image(file)
+    print(extracted_text)
+    #extracted_text = "Lebron James is the greatest of all time"
+
+    # Step 2: Create the request payload with the extracted text
+    payload = {
+        "message": {
+            "type": "text",
+            "text": extracted_text  # Replace mitochondria text with extracted text
+        },
+        "template": {
+            "url": "https://meme0-prod.sfo3.cdn.digitaloceanspaces.com/templates/17c840d5-081a-4514-bea6-dfcaf7a7a604.png"
+        },
+        "sound": {
+            "url": "https://memenome-prod.sfo3.cdn.digitaloceanspaces.com/sounds/again.mp3"
+        }
+    }
+
+    # Step 3: Send the request to the Memenome API
+    MEMENOME_API_URL = "https://api.memenome.ai/fetty_wap"
+
+
+    headers = {
+        "x-api-key": "037893a8-363e-4328-a0e3-207eaf065dea",  # If Memenome API uses X-API-Key
+        "Content-Type": "application/json",  
+        "Accept": "application/json"
+    }
+    response = requests.post(MEMENOME_API_URL,headers=headers, json=payload)
+
+    # Step 4: Return the API response
+    if response.status_code != 200:
+        return JSONResponse(content={"error": "Failed to send request"}, status_code=response.status_code)
+
+    return JSONResponse(content=response.json())
+# NEW CODE END
 
 # Run locally (if not using a cloud service)
 if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
