@@ -1,7 +1,8 @@
 import base64
 import json
-import json
 import os
+import random
+
 import requests
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File
@@ -75,7 +76,7 @@ async def clarify(text: TextRequest):
                                                    "information"}]
     clarifying_prompts = request_groq(conversation_history + prompts_message).split("; ")
 
-    return {"clarification": clarification, "clarifying_prompts": clarifying_prompts}
+    return {"explanation": clarification, "clarifying_prompts": clarifying_prompts}
 
 
 # OCR Endpoint - Extract text from image
@@ -142,7 +143,7 @@ async def recognize_math(file: UploadFile = File(...)):
 
 
 # Endpoint to process image containing both plain text and math
-@app.post("/process-page/")
+@app.post("/process-page")
 async def process_page(file: UploadFile = File(...)):
     # Read the uploaded file
     image_content = await file.read()
@@ -214,6 +215,15 @@ async def send_to_memenome(file: UploadFile = File(...)):
     extracted_text = await process_image(file)
     #extracted_text = "Lebron James is the greatest of all time"
 
+    headers = {
+        "x-api-key": "037893a8-363e-4328-a0e3-207eaf065dea",  # If Memenome API uses X-API-Key
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+
+    templates_response = requests.get("https://api.memenome.ai/templates", headers=headers).json().get('templates')
+    random_template = random.choice(templates_response).get('url')
+
     # Step 2: Create the request payload with the extracted text
     payload = {
         "message": {
@@ -221,7 +231,7 @@ async def send_to_memenome(file: UploadFile = File(...)):
             "text": extracted_text  # Replace mitochondria text with extracted text
         },
         "template": {
-            "url": "https://meme0-prod.sfo3.cdn.digitaloceanspaces.com/templates/17c840d5-081a-4514-bea6-dfcaf7a7a604.png"
+            "url": random_template
         },
         "sound": {
             "url": "https://memenome-prod.sfo3.cdn.digitaloceanspaces.com/sounds/again.mp3"
@@ -231,12 +241,6 @@ async def send_to_memenome(file: UploadFile = File(...)):
     # Step 3: Send the request to the Memenome API
     MEMENOME_API_URL = "https://api.memenome.ai/fetty_wap"
 
-
-    headers = {
-        "x-api-key": "037893a8-363e-4328-a0e3-207eaf065dea",  # If Memenome API uses X-API-Key
-        "Content-Type": "application/json",  
-        "Accept": "application/json"
-    }
     response = requests.post(MEMENOME_API_URL,headers=headers, json=payload)
 
     # Step 4: Return the API response
