@@ -2,10 +2,10 @@ import base64
 import json
 import os
 import random
-
+import redis
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Header
 from fastapi.responses import JSONResponse
 from google.cloud import vision
 from pydantic import BaseModel
@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 class TextRequest(BaseModel):
     text: str
+
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -22,6 +23,13 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 MATHPIX_API_KEY = os.getenv("MATHPIX_API_KEY")
 MATHPIX_API_APP_ID = os.getenv("MATHPIX_API_APP_ID")
 encoded_credentials = os.getenv("GOOGLE_CREDENTIALS")
+TEST_KEY = os.getenv("TEST_KEY")
+PROD_KEY = os.getenv("PROD_KEY")
+
+API_KEYS = {
+    TEST_KEY: {"role": "tester", "rate_limit": 10},  # Limited key
+    PROD_KEY: {"role": "admin", "rate_limit": None}  # Full access
+}
 
 # Initialize the Google Cloud Vision client
 credentials_json = base64.b64decode(encoded_credentials).decode("utf-8")
@@ -30,10 +38,42 @@ client = vision.ImageAnnotatorClient.from_service_account_info(credentials_dict)
 
 conversation_history = []
 
+redis_client = redis.StrictRedis(host="localhost", port=6379, db=0, decode_responses=True)
+
+
+def verify_api_key(x_api_key: str = Header(None)):
+    if x_api_key not in API_KEYS:
+        raise HTTPException(status_code=403, detail="Invalid API Key")
+    return API_KEYS[x_api_key]
+
+
+# Rate-limiting function
+def rate_limiter(api_key: dict = Depends(verify_api_key)):
+    rate_limit = api_key["rate_limit"]
+
+    if rate_limit is not None:
+        key = f"rate_limit:{api_key}"
+
+        # Check how many requests have been made in the last minute
+        request_count = redis_client.get(key)
+
+        if request_count is None:
+            # If the key doesn't exist, this is the first request. Set the count to 1
+            redis_client.set(key, 1, ex=60)  # Set expiration to 60 seconds
+        else:
+            # If the count exceeds the rate limit, reject the request
+            if int(request_count) >= rate_limit:
+                raise HTTPException(status_code=429, detail="Rate limit exceeded")
+
+            # Otherwise, increment the request count
+            redis_client.incr(key)
+
+    return api_key
+
 
 # Explain Text Using LLM
 @app.post("/explain")
-async def explain_text(file: UploadFile = File(...)):
+async def explain_text(file: UploadFile = File(...), api_key: dict = Depends(rate_limiter)):
     text = await process_image(file)
 
     global conversation_history
@@ -42,11 +82,12 @@ async def explain_text(file: UploadFile = File(...)):
 
     explanation = request_groq(conversation_history, True)
     prompts_message = [{"role": "user", "content": "Suggest three clarifying prompts a user might ask in plaint text, "
-                                          "separated only by a semicolon. Do not include any extra "
-                                          "information"}]
-    clarifying_prompts = request_groq(conversation_history+prompts_message).split("; ")
+                                                   "separated only by a semicolon. Do not include any extra "
+                                                   "information"}]
+    clarifying_prompts = request_groq(conversation_history + prompts_message).split("; ")
 
     return {"explanation": explanation, "clarifying_prompts": clarifying_prompts}
+
 
 def request_groq(messages, append_history=False):
     global conversation_history
@@ -64,8 +105,9 @@ def request_groq(messages, append_history=False):
     explanation = response.get("choices", [{}])[0].get("message", {}).get("content", "Can't process request.")
     return explanation
 
+
 @app.post("/clarify")
-async def clarify(text: TextRequest):
+async def clarify(text: TextRequest, api_key: dict = Depends(rate_limiter)):
     global conversation_history
 
     conversation_history.append({"role": "user", "content": text.text})
@@ -81,7 +123,7 @@ async def clarify(text: TextRequest):
 
 # OCR Endpoint - Extract text from image
 @app.post("/ocr")
-async def extract_text(file: UploadFile = File(...)):
+async def extract_text(file: UploadFile = File(...), api_key: dict = Depends(rate_limiter)):
     text = await process_image(file)
 
     return {"recognized_text": text}
@@ -105,9 +147,8 @@ async def process_image(file):
 MATHPIX_API_URL = "https://api.mathpix.com/v3/text"
 
 
-
 @app.post("/mathocr")
-async def recognize_math(file: UploadFile = File(...)):
+async def recognize_math(file: UploadFile = File(...), api_key: dict = Depends(rate_limiter)):
     # Read the uploaded file
     image_content = await file.read()
 
@@ -141,10 +182,9 @@ async def recognize_math(file: UploadFile = File(...)):
     return JSONResponse(content=result)
 
 
-
 # Endpoint to process image containing both plain text and math
 @app.post("/process-page")
-async def process_page(file: UploadFile = File(...)):
+async def process_page(file: UploadFile = File(...), api_key: dict = Depends(rate_limiter)):
     # Read the uploaded file
     image_content = await file.read()
 
@@ -186,6 +226,7 @@ async def process_page(file: UploadFile = File(...)):
 
 
 def convert_to_markdown(markdown: str) -> str:
+    global conversation_history
     """
     Convert the OCR results into a Markdown-formatted LaTeX page.
     - plain_text: The extracted plain text content.
@@ -206,14 +247,14 @@ def convert_to_markdown(markdown: str) -> str:
 # NEW CODE START: Fetty Wap API Endpoint
 # file: UploadFile = File(...)
 @app.post("/fetty_wap")
-async def send_to_memenome(file: UploadFile = File(...)):
+async def send_to_memenome(file: UploadFile = File(...), api_key: dict = Depends(rate_limiter)):
     """
     Extracts text from an uploaded image, replaces the mitochondria text 
     in the Memenome API payload, and sends the request.
     """
     # Step 1: Extract text from the image using Google Vision API
     extracted_text = await process_image(file)
-    #extracted_text = "Lebron James is the greatest of all time"
+    # extracted_text = "Lebron James is the greatest of all time"
 
     headers = {
         "x-api-key": "037893a8-363e-4328-a0e3-207eaf065dea",  # If Memenome API uses X-API-Key
@@ -241,13 +282,15 @@ async def send_to_memenome(file: UploadFile = File(...)):
     # Step 3: Send the request to the Memenome API
     MEMENOME_API_URL = "https://api.memenome.ai/fetty_wap"
 
-    response = requests.post(MEMENOME_API_URL,headers=headers, json=payload)
+    response = requests.post(MEMENOME_API_URL, headers=headers, json=payload)
 
     # Step 4: Return the API response
     if response.status_code != 200:
         return JSONResponse(content={"error": "Failed to send request"}, status_code=response.status_code)
 
     return JSONResponse(content=response.json())
+
+
 # NEW CODE END
 
 # Run locally (if not using a cloud service)
@@ -255,4 +298,3 @@ if __name__ == "__main__":
     import uvicorn
 
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
