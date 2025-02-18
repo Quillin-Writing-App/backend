@@ -28,6 +28,7 @@ MATHPIX_API_APP_ID = os.getenv("MATHPIX_API_APP_ID")
 encoded_credentials = os.getenv("GOOGLE_CREDENTIALS")
 TEST_KEY = os.getenv("TEST_KEY")
 PROD_KEY = os.getenv("PROD_KEY")
+REDIS_URL = os.getenv("REDIS_URL")
 
 API_KEYS = {
     TEST_KEY: {"role": "tester", "rate_limit": 10},  # Limited key
@@ -41,7 +42,7 @@ client = vision.ImageAnnotatorClient.from_service_account_info(credentials_dict)
 
 conversation_history = []
 
-redis_client = redis.StrictRedis(host="localhost", port=6379, db=0, decode_responses=True)
+redis_client = redis.from_url(REDIS_URL)
 
 
 def verify_api_key(authorization: HTTPAuthorizationCredentials = Depends(security)):
