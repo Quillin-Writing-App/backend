@@ -5,7 +5,8 @@ import random
 import redis
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Header
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.responses import JSONResponse
 from google.cloud import vision
 from pydantic import BaseModel
@@ -17,6 +18,8 @@ class TextRequest(BaseModel):
 
 # Initialize FastAPI app
 app = FastAPI()
+
+security = HTTPBearer()
 
 load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -41,18 +44,18 @@ conversation_history = []
 redis_client = redis.StrictRedis(host="localhost", port=6379, db=0, decode_responses=True)
 
 
-def verify_api_key(x_api_key: str = Header(None)):
-    if x_api_key not in API_KEYS:
+def verify_api_key(authorization: HTTPAuthorizationCredentials = Depends(security)):
+    if authorization.credentials not in API_KEYS:
         raise HTTPException(status_code=403, detail="Invalid API Key")
-    return API_KEYS[x_api_key]
+    return authorization
 
 
 # Rate-limiting function
-def rate_limiter(api_key: dict = Depends(verify_api_key)):
-    rate_limit = api_key["rate_limit"]
+def rate_limiter(authorization: HTTPAuthorizationCredentials = Depends(verify_api_key)):
+    rate_limit = API_KEYS[authorization.credentials]["rate_limit"]
 
     if rate_limit is not None:
-        key = f"rate_limit:{api_key}"
+        key = f"rate_limit:{API_KEYS[authorization.credentials]}"
 
         # Check how many requests have been made in the last minute
         request_count = redis_client.get(key)
@@ -68,12 +71,13 @@ def rate_limiter(api_key: dict = Depends(verify_api_key)):
             # Otherwise, increment the request count
             redis_client.incr(key)
 
-    return api_key
+    return authorization.credentials
 
 
 # Explain Text Using LLM
 @app.post("/explain")
-async def explain_text(file: UploadFile = File(...), api_key: dict = Depends(rate_limiter)):
+async def explain_text(file: UploadFile = File(...),
+                       authorization: HTTPAuthorizationCredentials = Depends(rate_limiter)):
     text = await process_image(file)
 
     global conversation_history
@@ -107,7 +111,7 @@ def request_groq(messages, append_history=False):
 
 
 @app.post("/clarify")
-async def clarify(text: TextRequest, api_key: dict = Depends(rate_limiter)):
+async def clarify(text: TextRequest, authorization: HTTPAuthorizationCredentials = Depends(rate_limiter)):
     global conversation_history
 
     conversation_history.append({"role": "user", "content": text.text})
@@ -123,7 +127,8 @@ async def clarify(text: TextRequest, api_key: dict = Depends(rate_limiter)):
 
 # OCR Endpoint - Extract text from image
 @app.post("/ocr")
-async def extract_text(file: UploadFile = File(...), api_key: dict = Depends(rate_limiter)):
+async def extract_text(file: UploadFile = File(...),
+                       authorization: HTTPAuthorizationCredentials = Depends(rate_limiter)):
     text = await process_image(file)
 
     return {"recognized_text": text}
@@ -148,7 +153,8 @@ MATHPIX_API_URL = "https://api.mathpix.com/v3/text"
 
 
 @app.post("/mathocr")
-async def recognize_math(file: UploadFile = File(...), api_key: dict = Depends(rate_limiter)):
+async def recognize_math(file: UploadFile = File(...),
+                         authorization: HTTPAuthorizationCredentials = Depends(rate_limiter)):
     # Read the uploaded file
     image_content = await file.read()
 
@@ -184,7 +190,8 @@ async def recognize_math(file: UploadFile = File(...), api_key: dict = Depends(r
 
 # Endpoint to process image containing both plain text and math
 @app.post("/process-page")
-async def process_page(file: UploadFile = File(...), api_key: dict = Depends(rate_limiter)):
+async def process_page(file: UploadFile = File(...),
+                       authorization: HTTPAuthorizationCredentials = Depends(rate_limiter)):
     # Read the uploaded file
     image_content = await file.read()
 
@@ -247,7 +254,8 @@ def convert_to_markdown(markdown: str) -> str:
 # NEW CODE START: Fetty Wap API Endpoint
 # file: UploadFile = File(...)
 @app.post("/fetty_wap")
-async def send_to_memenome(file: UploadFile = File(...), api_key: dict = Depends(rate_limiter)):
+async def send_to_memenome(file: UploadFile = File(...),
+                           authorization: HTTPAuthorizationCredentials = Depends(rate_limiter)):
     """
     Extracts text from an uploaded image, replaces the mitochondria text 
     in the Memenome API payload, and sends the request.
